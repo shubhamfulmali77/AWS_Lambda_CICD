@@ -8,7 +8,7 @@ on:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     steps:
     - name: Checkout code
@@ -22,7 +22,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y python3-pip jq zip docker.io
+        sudo apt-get install -y python3-pip jq zip
         pip install boto3
 
     - name: Set environment variables
@@ -38,19 +38,17 @@ jobs:
           echo "LOG_LEVEL=DEBUG" >> $GITHUB_ENV
         fi
 
-    - name: Package Lambda Function (Amazon Linux compatible)
+    - name: Package Lambda Function (using python:3.11 container)
       run: |
         cd lambda_function
         mkdir -p package
-        docker run --rm -v "$PWD":/var/task amazonlinux:2023 bash -c "\
-          yum -y update && \
-          yum -y install python3-pip zip && \
-          pip3 install --upgrade pip && \
-          pip3 install --no-cache-dir -r requirements.txt -t package/ && \
-          cp app.py package/ && \
-          cd package && \
-          zip -r ../lambda.zip . \
+        docker run --rm -v "$PWD":/var/task python:3.11 bash -c "
+          pip install --upgrade pip &&
+          pip install --no-cache-dir -r /var/task/requirements.txt -t /var/task/package
         "
+        cp app.py package/
+        cd package
+        zip -r ../lambda.zip .
         cd ..
 
     - name: Deploy to AWS Lambda
@@ -63,9 +61,7 @@ jobs:
         REGION="us-east-1"
         echo "Deploying to Lambda function: $FUNCTION_NAME"
 
-        # Check if the Lambda function exists
         FUNCTION_EXISTS=$(aws lambda get-function --function-name $FUNCTION_NAME --region $REGION || echo "false")
-
         ENV_VARS="Variables={ENV=${{ env.ENV }},API_KEY=${{ env.API_KEY }},LOG_LEVEL=${{ env.LOG_LEVEL }}}"
 
         if [ "$FUNCTION_EXISTS" == "false" ]; then
@@ -86,7 +82,6 @@ jobs:
             --region $REGION \
             --zip-file fileb://lambda_function/lambda.zip
 
-          # Wait for function code update to complete
           echo "Waiting for function code update to complete..."
           while true; do
             UPDATE_STATUS=$(aws lambda get-function --function-name $FUNCTION_NAME --region $REGION --query 'Configuration.LastUpdateStatus' --output text)
@@ -102,7 +97,6 @@ jobs:
             fi
           done
 
-          # Update function configuration
           aws lambda update-function-configuration \
             --function-name $FUNCTION_NAME \
             --region $REGION \
