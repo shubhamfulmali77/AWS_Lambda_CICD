@@ -22,7 +22,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y python3-pip jq zip
+        sudo apt-get install -y python3-pip jq zip docker.io
         pip install boto3
 
     - name: Set environment variables
@@ -38,17 +38,16 @@ jobs:
           echo "LOG_LEVEL=DEBUG" >> $GITHUB_ENV
         fi
 
-    - name: Package Lambda Function
+    - name: Package Lambda Function (Amazon Linux compatible)
       run: |
         cd lambda_function
-        python3 -m venv venv
-        source venv/bin/activate
-        mkdir package
-        pip install --no-cache-dir -r requirements.txt -t ./package
-        cp app.py ./package/
+        mkdir -p package
+        docker run --rm -v "$PWD":/var/task lambci/lambda:build-python3.11 \
+          pip install --no-cache-dir -r requirements.txt -t package/
+        cp app.py package/
         cd package
-        zip -r ../../lambda.zip .
-        cd ../..
+        zip -r ../lambda.zip .
+        cd ..
 
     - name: Deploy to AWS Lambda
       env:
@@ -73,7 +72,7 @@ jobs:
             --role arn:aws:iam::253490785233:role/test_lamda_dev \
             --handler app.lambda_handler \
             --timeout 300 \
-            --zip-file fileb://lambda.zip \
+            --zip-file fileb://lambda_function/lambda.zip \
             --region $REGION \
             --environment "$ENV_VARS"
         else
@@ -81,7 +80,7 @@ jobs:
           aws lambda update-function-code \
             --function-name $FUNCTION_NAME \
             --region $REGION \
-            --zip-file fileb://lambda.zip
+            --zip-file fileb://lambda_function/lambda.zip
 
           # Wait for function code update to complete
           echo "Waiting for function code update to complete..."
