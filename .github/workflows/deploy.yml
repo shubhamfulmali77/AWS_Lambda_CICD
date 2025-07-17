@@ -22,7 +22,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y python3-pip jq zip 
+        sudo apt-get install -y python3-pip jq zip docker.io
         pip install boto3
 
     - name: Set environment variables
@@ -42,11 +42,15 @@ jobs:
       run: |
         cd lambda_function
         mkdir -p package
-        docker run --rm -v "$PWD":/var/task lambci/lambda:build-python3.11 \
-          pip install --no-cache-dir -r requirements.txt -t package/
-        cp app.py package/
-        cd package
-        zip -r ../lambda.zip .
+        docker run --rm -v "$PWD":/var/task amazonlinux:2023 bash -c "\
+          yum -y update && \
+          yum -y install python3-pip zip && \
+          pip3 install --upgrade pip && \
+          pip3 install --no-cache-dir -r requirements.txt -t package/ && \
+          cp app.py package/ && \
+          cd package && \
+          zip -r ../lambda.zip . \
+        "
         cd ..
 
     - name: Deploy to AWS Lambda
