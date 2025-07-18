@@ -26,17 +26,18 @@ jobs:
           echo "LOG_LEVEL=DEBUG" >> $GITHUB_ENV
         fi
 
-    - name: Build deployment package using Lambda-compatible Docker image
-      run: |
-        mkdir -p build
-        cp lambda_function/app.py lambda_function/requirements.txt build/
+    - name: Build deployment package in Python 3.12 Docker container
+  run: |
+    mkdir -p build
+    cp lambda_function/app.py lambda_function/requirements.txt build/
 
-        docker run --rm -v "$PWD/build":/var/task public.ecr.aws/lambda/python:3.12 bash -c "
-          pip install -r requirements.txt -t ./package && \
-          cp app.py ./package && \
-          cd package && \
-          zip -r9 ../lambda.zip .
-        "
+    docker run --rm -v "$PWD/build":/app -w /app python:3.12 bash -c "
+      pip install -r requirements.txt -t package && \
+      cp app.py package/ && \
+      cd package && \
+      zip -r9 ../lambda.zip .
+    "
+
 
     - name: Deploy to AWS Lambda
       env:
