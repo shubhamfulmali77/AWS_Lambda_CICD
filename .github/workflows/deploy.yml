@@ -19,12 +19,10 @@ jobs:
       with:
         python-version: '3.12'
 
-    - name: Install dependencies
+    - name: Install system dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y zip jq
-        pip install --upgrade pip
-        pip install boto3
 
     - name: Set environment variables
       run: |
@@ -41,17 +39,25 @@ jobs:
     - name: Package Lambda Function (clean build)
       run: |
         cd lambda_function
+
+        # Create virtual env and activate
         python -m venv venv
         source venv/bin/activate
 
-        mkdir -p package
+        # Upgrade pip and install requirements into package directory
         pip install --upgrade pip
+        mkdir -p package
         pip install --no-cache-dir -r requirements.txt -t package
 
+        # Copy your Lambda entry point
         cp app.py package/
 
+        # Zip from inside the package directory
         cd package
-        zip -r9 ../../lambda.zip .  # ✅ Clean zip from inside package
+        zip -r9 ../../lambda.zip .
+
+        # Deactivate virtual env
+        deactivate
         cd ../..
 
     - name: Deploy to AWS Lambda
