@@ -8,13 +8,13 @@ on:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v3
 
-    - name: Set Environment Variables
+    - name: Set environment variables
       run: |
         if [[ "${{ github.ref_name }}" == "main" ]]; then
           echo "ENV=prod" >> $GITHUB_ENV
@@ -26,19 +26,15 @@ jobs:
           echo "LOG_LEVEL=DEBUG" >> $GITHUB_ENV
         fi
 
-    - name: Package Lambda with Docker (Amazon Linux 2023 + Python 3.12)
+    - name: Build deployment package using Lambda-compatible Docker image
       run: |
-        mkdir -p package
+        mkdir -p build
+        cp lambda_function/app.py requirements.txt build/
 
-        docker run --rm -v "$PWD":/app -w /app amazonlinux:2023 bash -c "
-          yum install -y python3.12 python3.12-devel python3.12-pip zip gcc git &&
-          alternatives --install /usr/bin/python python /usr/bin/python3.12 1 &&
-          python -m venv venv &&
-          source venv/bin/activate &&
-          pip install --upgrade pip &&
-          pip install -r lambda_function/requirements.txt -t package &&
-          cp lambda_function/app.py package/ &&
-          cd package &&
+        docker run --rm -v "$PWD/build":/var/task public.ecr.aws/lambda/python:3.12 bash -c "
+          pip install -r requirements.txt -t ./package && \
+          cp app.py ./package && \
+          cd package && \
           zip -r9 ../lambda.zip .
         "
 
@@ -50,30 +46,42 @@ jobs:
       run: |
         FUNCTION_NAME="cicd_lambda_${{ github.ref_name }}"
         REGION="us-east-1"
+
+        echo "Deploying to Lambda function: $FUNCTION_NAME"
+
+        FUNCTION_EXISTS=$(aws lambda get-function --function-name $FUNCTION_NAME --region $REGION || echo "false")
+
         ENV_VARS="Variables={ENV=${{ env.ENV }},API_KEY=${{ env.API_KEY }},LOG_LEVEL=${{ env.LOG_LEVEL }}}"
 
-        echo "Deploying $FUNCTION_NAME..."
-
-        if aws lambda get-function --function-name $FUNCTION_NAME --region $REGION; then
-          echo "Updating function code..."
-          aws lambda update-function-code \
-            --function-name $FUNCTION_NAME \
-            --region $REGION \
-            --zip-file fileb://lambda.zip
-
-          aws lambda update-function-configuration \
-            --function-name $FUNCTION_NAME \
-            --region $REGION \
-            --environment "$ENV_VARS"
-        else
-          echo "Creating new Lambda function..."
+        if [ "$FUNCTION_EXISTS" == "false" ]; then
+          echo "Creating Lambda function $FUNCTION_NAME..."
           aws lambda create-function \
             --function-name $FUNCTION_NAME \
             --runtime python3.12 \
             --role arn:aws:iam::253490785233:role/test_lamda_dev \
             --handler app.lambda_handler \
             --timeout 300 \
-            --zip-file fileb://lambda.zip \
+            --zip-file fileb://build/lambda.zip \
+            --region $REGION \
+            --environment "$ENV_VARS"
+        else
+          echo "Updating Lambda function $FUNCTION_NAME..."
+
+          # Update function code
+          aws lambda update-function-code \
+            --function-name $FUNCTION_NAME \
+            --region $REGION \
+            --zip-file fileb://build/lambda.zip
+
+          # Wait until update completes
+          echo "Waiting for Lambda to finish updating..."
+          aws lambda wait function-updated \
+            --function-name $FUNCTION_NAME \
+            --region $REGION
+
+          # Update environment variables
+          aws lambda update-function-configuration \
+            --function-name $FUNCTION_NAME \
             --region $REGION \
             --environment "$ENV_VARS"
         fi
