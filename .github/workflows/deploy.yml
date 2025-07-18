@@ -8,21 +8,22 @@ on:
 
 jobs:
   deploy:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04  # Use latest Ubuntu with Python 3.12 support
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v3
 
-    - name: Setup Python 3.11
+    - name: Setup Python 3.12
       uses: actions/setup-python@v5
       with:
-        python-version: '3.11'
+        python-version: '3.12'
 
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y python3-pip jq zip
+        sudo apt-get install -y jq zip
+        pip install --upgrade pip
         pip install boto3
 
     - name: Set environment variables
@@ -38,18 +39,17 @@ jobs:
           echo "LOG_LEVEL=DEBUG" >> $GITHUB_ENV
         fi
 
-    - name: Package Lambda Function (using python:3.11 container)
+    - name: Package Lambda Function
       run: |
         cd lambda_function
-        mkdir -p package
-        docker run --rm -v "$PWD":/var/task python:3.11 bash -c "
-          pip install --upgrade pip &&
-          pip install --no-cache-dir -r /var/task/requirements.txt -t /var/task/package
-        "
-        cp app.py package/
+        python -m venv venv
+        source venv/bin/activate
+        mkdir package
+        pip install --no-cache-dir -r requirements.txt -t ./package
+        cp app.py ./package/
         cd package
-        zip -r ../lambda.zip .
-        cd ..
+        zip -r ../../lambda.zip .
+        cd ../..
 
     - name: Deploy to AWS Lambda
       env:
@@ -62,17 +62,18 @@ jobs:
         echo "Deploying to Lambda function: $FUNCTION_NAME"
 
         FUNCTION_EXISTS=$(aws lambda get-function --function-name $FUNCTION_NAME --region $REGION || echo "false")
+
         ENV_VARS="Variables={ENV=${{ env.ENV }},API_KEY=${{ env.API_KEY }},LOG_LEVEL=${{ env.LOG_LEVEL }}}"
 
         if [ "$FUNCTION_EXISTS" == "false" ]; then
           echo "Creating Lambda function $FUNCTION_NAME..."
           aws lambda create-function \
             --function-name $FUNCTION_NAME \
-            --runtime python3.11 \
+            --runtime python3.12 \
             --role arn:aws:iam::253490785233:role/test_lamda_dev \
             --handler app.lambda_handler \
             --timeout 300 \
-            --zip-file fileb://lambda_function/lambda.zip \
+            --zip-file fileb://lambda.zip \
             --region $REGION \
             --environment "$ENV_VARS"
         else
@@ -80,7 +81,7 @@ jobs:
           aws lambda update-function-code \
             --function-name $FUNCTION_NAME \
             --region $REGION \
-            --zip-file fileb://lambda_function/lambda.zip
+            --zip-file fileb://lambda.zip
 
           echo "Waiting for function code update to complete..."
           while true; do
