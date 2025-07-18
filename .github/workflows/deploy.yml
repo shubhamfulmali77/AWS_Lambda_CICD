@@ -8,7 +8,7 @@ on:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest  # Uses Ubuntu 24.04 (which includes Python 3.12)
 
     steps:
     - name: Checkout code
@@ -17,7 +17,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y python3.11 python3.11-venv python3-pip jq zip
+        sudo apt-get install -y python3.12 python3.12-venv python3-pip jq zip
         pip3 install boto3
 
     - name: Set environment variables
@@ -36,7 +36,7 @@ jobs:
     - name: Package Lambda Function
       run: |
         cd lambda_function
-        python3.11 -m venv venv
+        python3.12 -m venv venv
         source venv/bin/activate
         mkdir package
         pip install --no-cache-dir -r requirements.txt -t ./package
@@ -55,16 +55,14 @@ jobs:
         REGION="us-east-1"
         echo "Deploying to Lambda function: $FUNCTION_NAME"
 
-        # Check if the Lambda function exists
         FUNCTION_EXISTS=$(aws lambda get-function --function-name $FUNCTION_NAME --region $REGION || echo "false")
-
         ENV_VARS="Variables={ENV=${{ env.ENV }},API_KEY=${{ env.API_KEY }},LOG_LEVEL=${{ env.LOG_LEVEL }}}"
 
         if [ "$FUNCTION_EXISTS" == "false" ]; then
           echo "Creating Lambda function $FUNCTION_NAME..."
           aws lambda create-function \
             --function-name $FUNCTION_NAME \
-            --runtime python3.11 \
+            --runtime python3.12 \
             --role arn:aws:iam::253490785233:role/test_lamda_dev \
             --handler app.lambda_handler \
             --timeout 300 \
@@ -78,7 +76,6 @@ jobs:
             --region $REGION \
             --zip-file fileb://lambda.zip
 
-          # Wait for function code update to complete
           echo "Waiting for function code update to complete..."
           while true; do
             UPDATE_STATUS=$(aws lambda get-function --function-name $FUNCTION_NAME --region $REGION --query 'Configuration.LastUpdateStatus' --output text)
@@ -94,7 +91,6 @@ jobs:
             fi
           done
 
-          # Update function configuration
           aws lambda update-function-configuration \
             --function-name $FUNCTION_NAME \
             --region $REGION \
