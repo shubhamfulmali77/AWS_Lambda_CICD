@@ -8,17 +8,24 @@ on:
 
 jobs:
   deploy:
-    runs-on: ubuntu-24.04  # Python 3.12 supported
+    runs-on: ubuntu-22.04  # Compatible with Docker and Python 3.12
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v3
 
-    - name: Install zip & Docker
+    - name: Setup Python 3.12
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Install Docker (official script)
       run: |
         sudo apt-get update
-        sudo apt-get install -y zip docker.io
-        sudo systemctl start docker
+        sudo apt-get install -y zip jq curl
+        curl -fsSL https://get.docker.com -o get-docker.sh
+        sh get-docker.sh
+        sudo chmod 666 /var/run/docker.sock
 
     - name: Set environment variables
       run: |
@@ -32,18 +39,20 @@ jobs:
           echo "LOG_LEVEL=DEBUG" >> $GITHUB_ENV
         fi
 
-    - name: Package Lambda with Docker (Amazon Linux 2)
+    - name: Package Lambda in Amazon Linux Docker (to avoid numpy error)
       run: |
-        cd lambda_function
-        mkdir -p package
-        cp app.py requirements.txt package/
+        mkdir -p output
 
-        docker run --rm -v "$PWD/package":/var/task lambci/lambda:build-python3.12 \
-          /bin/bash -c "pip install --upgrade pip && pip install -r requirements.txt -t ."
-
-        cd package
-        zip -r9 ../lambda.zip .
-        cd ..
+        docker run --rm -v "$PWD":/var/task -w /var/task \
+          public.ecr.aws/lambda/python:3.12 \
+          /bin/bash -c "
+            python3.12 -m venv venv &&
+            source venv/bin/activate &&
+            pip install --upgrade pip &&
+            pip install -r lambda_function/requirements.txt -t output &&
+            cp lambda_function/app.py output &&
+            cd output && zip -r9 ../lambda.zip .
+          "
 
     - name: Deploy to AWS Lambda
       env:
@@ -68,7 +77,7 @@ jobs:
             --role arn:aws:iam::253490785233:role/test_lamda_dev \
             --handler app.lambda_handler \
             --timeout 300 \
-            --zip-file fileb://lambda_function/lambda.zip \
+            --zip-file fileb://lambda.zip \
             --region $REGION \
             --environment "$ENV_VARS"
         else
@@ -76,7 +85,7 @@ jobs:
           aws lambda update-function-code \
             --function-name $FUNCTION_NAME \
             --region $REGION \
-            --zip-file fileb://lambda_function/lambda.zip
+            --zip-file fileb://lambda.zip
 
           echo "Waiting for function code update to complete..."
           while true; do
